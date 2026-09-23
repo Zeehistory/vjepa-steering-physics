@@ -1,0 +1,13 @@
+name: vjepa-physics-decoder
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -e .[dev,encoders,extras]
+# Notes:
+#   * On CUDA machines install the matching pytorch-cuda build instead of the CPU wheel.
+#   * The offline mock pipeline only needs the base `pip install -e .[dev]`.
+#   * Real V-JEPA2 weights require the `encoders` extra (transformers + huggingface-hub).

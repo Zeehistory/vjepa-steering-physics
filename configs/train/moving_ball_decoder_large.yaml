@@ -1,0 +1,119 @@
+# Step 2 (velocity-first): decoder for the clean moving-ball dataset (128x128, 32 frames).
+# Same large transformer decoder as physics_iq_transformer_large.yaml, but sized for the moving-ball
+# latent cache so it can be used for velocity steering (steer_velocity.py decodes at 128/32).
+# Train:  LATENT_DIR=.../moving_ball_velocity/vjepa2_large sbatch experiments/pipeline/03_train/train_decoder.sh
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 128
+  num_frames: 32
+  frozen: true
+  layers: [6, 12, 18, 23]   # multi-scale decoding from several layers
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 24
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 128
+  out_num_frames: 32
+  out_channels: 3
+
+data:
+  name: moving_ball
+  root: null
+  image_size: 128
+  num_frames: 32
+  fps: 8
+  scenario: constant_velocity
+  categories: all
+  split: train
+  num_clips: 512
+  speed_range: [0.008, 0.038]
+  radius_range: [0.07, 0.10]
+  seed: 0
+
+loss:
+  # The ball is ~2% of the frame on a white background, so an unweighted pixel loss is minimized by a
+  # blank-white prediction and the decoder collapses (ball dropped — see diag: decoded min 0.996).
+  # `foreground` up-weights dark (ball) pixels so the object is actually reconstructed.
+  # ROOT CAUSE of prior collapses (white @gamma=1, dark @gamma=10): the sigmoid output can only match a
+  # pure-white (1.0) target by driving its logit to +inf, where sigmoid saturates (grad ~1e-3) and the
+  # small-object foreground signal is too weak to pull ball-pixels back -> uniform collapse, loss pinned
+  # flat at ~0.85. Tuning gamma only swaps WHICH uniform minimum wins; it never removes the saturation
+  # trap. The real fix: compress targets off the {0,1} boundary so the bg optimum is a finite,
+  # non-saturated logit (~2.9, grad ~0.05, ~50x livelier) and gradients stay alive to render the ball.
+  target_lo: 0.05           # ball target 0.15 -> 0.185 ; white bg 1.0 -> 0.95 (still clearly "white",
+  target_hi: 0.95           # tracker uses relative darkness so contrast 0.185-vs-0.95 tracks fine)
+  charbonnier: 0.1          # light area-avg term: keeps the (large) background pinned to white
+  foreground: 1.0
+  foreground_gamma: 1.0     # bg_err + 1*fg_err separate-mean: foreground & background regions weighted
+                            # EQUALLY regardless of area, so neither white- nor dark-collapse is a cheap
+                            # minimum (both cost ~0.8 vs ~0 for a correct render). With the saturation
+                            # trap removed (target compression above), gradients can now actually descend
+                            # to localize the dark ball instead of parking at a uniform minimum.
+  ssim: 0.2                 # rewards spatial structure -> penalizes both uniform collapses
+  ms_ssim: 0.2
+  lpips: 0.0
+  temporal_consistency: 0.25
+  # STATE CO-TRAINING (forces latent conditioning). With pixel-loss only, the decoder ignored the
+  # per-clip latent and rendered a dataset-AVERAGE ball (identical decode across clips, loss plateaued
+  # ~0.65) because per-clip position/velocity is a low-variance latent subspace plain reconstruction
+  # never learns to use. These auxiliary heads regress per-frame ground-truth state from the SAME query
+  # features the frame head reads, so the decoder is forced to encode WHERE the ball is -> the frame
+  # head can then place it. `trajectory` (per-frame position) is the localization driver; `velocity`
+  # ties in the steering target; `state` is a mild all-column regularizer.
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  # MOTION FAITHFULNESS (the magnitude-gap fix). `trajectory`/`velocity` above train the auxiliary
+  # STATE HEAD to read position from the latent, but they place NO constraint on where the frame head
+  # actually renders the ball — so the pixel terms (charbonnier/ssim) are still minimized by a static
+  # path-covering smear whose centroid barely moves (decoded speed ~4x too slow; the Step-2 magnitude
+  # gap). `frame_position` ties the DECODED ball's per-frame soft centroid to GT position every frame:
+  # a smear's centroid is pinned at the path midpoint -> large per-frame error, so the only way down is
+  # to render a ball that actually translates at the true speed. `frame_spread` adds light anti-smear
+  # pressure (penalize dark-mass 2nd-moment beyond a compact disk). Magnitudes calibrated on the real
+  # render: frame_position ~0.008-0.037 when wrong, ~0 when faithful.
+  frame_position: 20.0
+  frame_spread: 2.0
+  frame_spread_max_var: 0.004
+
+optim:
+  lr: 5.0e-4                # raised from 2e-4: with grad_clip=1 the step size ~lr, so escaping the
+                            # white-collapse plateau (where loss sat flat at ~0.85) is gated by LR.
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 4000
+  scheduler: cosine
+  grad_accum: 4
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 2
+  num_workers: 2
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 1000
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/moving_ball_decoder
+latent_dir: outputs/latents/moving_ball_velocity/vjepa2_large
+wandb: false
+tags: [moving_ball, vjepa2, vit_l_24, decoder_large, velocity]

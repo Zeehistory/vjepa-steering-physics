@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+outputs/
+logs/
+data/
+assets/
+*.pt
+*.npz
+*.npy
+.pytest_cache/
+*.egg-info/

@@ -1,0 +1,3 @@
+metrics: [position_rmse, velocity_rmse, acceleration_rmse, gravity_error,
+          direction_angular_error_deg, collision_f1, object_permanence_acc, trajectory_rollout_error]
+oracle: true

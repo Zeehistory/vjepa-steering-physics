@@ -1,0 +1,68 @@
+# End-to-end smoke config: mock encoder + small transformer decoder + tiny synthetic dataset.
+# Runs offline on CPU/MPS in ~a minute. Co-trains reconstruction (mode A) + state head (mode C).
+encoder:
+  name: mock
+  hidden_dim: 256
+  num_layers: 6
+  num_heads: 8
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 128
+  num_frames: 16
+  frozen: true
+  layers: all
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 256
+  depth: 4
+  heads: 4
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 64
+  use_layer_embedding: true
+  gradient_checkpointing: false
+  out_image_size: 64
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: synthetic_physics
+  image_size: 64
+  num_frames: 16
+  fps: 8
+  num_clips: 24
+  scenarios: [bouncing_ball, projectile, collision]
+  seed: 0
+
+loss:
+  charbonnier: 1.0
+  ssim: 0.5
+  temporal_consistency: 0.5
+  state: 1.0
+  velocity: 0.5
+  collision: 0.2
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  warmup_steps: 10
+  max_steps: 60
+  scheduler: cosine
+  grad_accum: 1
+  ema_decay: 0.0
+
+train:
+  batch_size: 4
+  num_workers: 0
+  mixed_precision: "no"
+  log_every: 10
+  ckpt_every: 60
+  seed: 0
+  deterministic: true
+
+output_dir: outputs/smoke
+latent_dir: null
+wandb: false
+tags: [smoke, synthetic, mock]

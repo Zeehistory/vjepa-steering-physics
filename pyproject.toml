@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vjepa-physics-decoder"
+version = "0.1.0"
+description = "Reading, steering and acting on physical quantities in frozen video world-model latents."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [{ name = "Anonymous" }]
+keywords = ["v-jepa", "world-models", "video", "physics", "interpretability", "representation-learning"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.24",
+    "omegaconf>=2.3",
+    "einops>=0.7",
+    "imageio[ffmpeg]>=2.31",
+    "pyarrow>=14.0",
+    "scikit-learn>=1.3",
+    "scipy>=1.11",
+    "tqdm>=4.66",
+    "accelerate>=0.27",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+]
+
+[project.optional-dependencies]
+# Real V-JEPA2 weights via HuggingFace; not required for the offline mock pipeline.
+encoders = ["transformers>=4.44", "huggingface-hub>=0.23", "safetensors>=0.4"]
+# Optional perceptual / analysis extras that are imported lazily.
+extras = ["lpips>=0.1.4", "umap-learn>=0.5", "webdataset>=0.2"]
+# Physics engines for Step-2 synthetic data (imported lazily, only when the dataset is used).
+# MuJoCo: rigid-body solid mechanics (CPU/GPU; headless render needs MUJOCO_GL=egl).
+sim_mujoco = ["mujoco>=3.1"]
+# Genesis: GPU-only fluid dynamics (SPH/MPM). Install on a CUDA node per the Genesis docs.
+sim_genesis = ["genesis-world"]
+demo = ["gradio>=4.0"]
+logging = ["wandb>=0.16", "tensorboard>=2.15"]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.4",
+    "mypy>=1.8",
+    "pre-commit>=3.5",
+    "types-PyYAML",
+]
+
+[project.urls]
+Homepage = "https://anonymous.4open.science"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+ignore = ["E501", "B008", "E702"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+disallow_untyped_defs = false
+follow_imports = "silent"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

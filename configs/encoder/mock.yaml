@@ -1,0 +1,14 @@
+# Deterministic offline mock encoder (V-JEPA2-shaped). No weights/network needed.
+name: mock
+hidden_dim: 256
+num_layers: 6
+num_heads: 8
+patch_size: 16
+tubelet_size: 2
+image_size: 128
+num_frames: 16
+frozen: true
+layers: all
+extract_attention: false
+device: auto
+dtype: float32

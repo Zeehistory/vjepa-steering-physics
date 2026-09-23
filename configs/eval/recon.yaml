@@ -1,0 +1,3 @@
+metrics: [psnr, ssim, ms_ssim, l1, l2, temporal_consistency, lpips, fvd]
+baselines: [copy_first_frame, mean_frame, random_frame]
+num_eval_clips: 16

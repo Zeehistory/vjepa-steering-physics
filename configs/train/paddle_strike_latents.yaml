@@ -1,0 +1,49 @@
+# Latent extraction spec for the paddle-strike dataset (256x256, 16 frames, VJEPA2-L).
+#
+# This file exists because extract_latents.py merges a `--dataset` file AFTER command-line overrides,
+# which would clobber the num_clips/seed/scenario the submit script sets per split. Carrying the data
+# block here instead makes those overrides stick -- the same reason
+# configs/train/moving_ball_scene_decoder.yaml is used for the scene_velocity extraction.
+#
+# Four caches are extracted from this one file, differing only in overrides:
+#
+#   train post: data.scenario=scene_paddle_strike     data.num_clips=4000 data.seed=0
+#   train pre:  data.scenario=scene_paddle_strike_pre data.num_clips=500  data.seed=0
+#   test  post: data.scenario=scene_paddle_strike     data.num_clips=800  data.seed=2
+#   test  pre:  data.scenario=scene_paddle_strike_pre data.num_clips=100  data.seed=2
+#
+# The pre cache is 1/8 the size of the post cache on purpose: the pre-window is bit-identical across a
+# scene's 8 actions (the paddle waits at a fixed x), so one clip per scene carries all the context
+# there is. Extracting 8 copies would only spend GPU time proving they are identical.
+#
+# Splits are SCENE-disjoint via distinct seeds, and scene ids are what velocity_ops.group_scenes pairs
+# on, so no scene can straddle train and test.
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256          # native VJEPA2-L resolution -> 16x16 = 256 spatial tokens
+  num_frames: 16           # tubelet 2 -> 8 temporal tokens
+  frozen: true
+  layers: [6, 12, 18, 23]  # same multi-scale set the rest of the project reads
+
+data:
+  name: paddle_strike
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 60
+  scenario: scene_paddle_strike
+  clips_per_scene: 8
+  categories: all
+  split: train
+  num_clips: 4000
+  v_in_range: [0.85, 1.15]     # WORLD m/s
+  ratio_range: [0.5, 3.0]      # |v_out| / v_in -- the CERTIFIED envelope
+  embodiment: paddle
+  mixed_appearance: false
+  seed: 0

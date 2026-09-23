@@ -1,0 +1,5 @@
+# Experiment 6: discover a physical direction, intervene, decode, measure controllability.
+target_variable: gravity
+intervention_layer: 3
+alphas: [-2.0, -1.0, 0.0, 1.0, 2.0]
+readout: gravity

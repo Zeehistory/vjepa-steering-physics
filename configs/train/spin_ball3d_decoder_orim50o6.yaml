@@ -1,0 +1,153 @@
+# RGB decoder for the velocity x spin CROSSTALK scene (spin_ball3d), 256x256 / 16 frames.
+#
+# Architecture, loss and optimiser are copied VERBATIM from configs/train/rolling_ball3d_decoder.yaml —
+# only the data block and the output paths differ. That is the same discipline as rolling_ball3d itself:
+# the scene changes, the decoder does not, so a difference in steering quality is attributable to the
+# scene (two quantities instead of one) rather than to a retuned decoder.
+#
+# The one thing this decoder must do that no previous one had to: render the MARKER in the right place.
+# Every existing loss term constrains the ball's position and motion (frame_position, trajectory,
+# velocity) and nothing constrains the marker's phase, so a decoder could minimise the loss while
+# smearing the marker into a phase-averaged ring — the rotational analogue of the translation smear that
+# `frame_position` was introduced to kill.
+#
+# An earlier version of this comment argued it would not get away with that, because `state` regresses
+# obj0_theta and the marker is the highest-contrast object in the frame. THAT ARGUMENT WAS WRONG AND THE
+# GATE DISPROVED IT. Two full runs (8k and 24k steps) both smeared the marker to
+# `marker_mass_decoded/rendered = 0.000`, decoded omega correlating -0.006 with truth -- while the SAME
+# 24k checkpoint rendered velocity beautifully (speed corr 0.942, heading error 1.4 deg). `state`
+# constrains a regression HEAD, not pixels, so it cannot prevent a pixel-space smear; and "blurring it is
+# expensive" is a hope, not a constraint.
+#
+# The real fix is a term that already existed and was simply never switched on here: `frame_orientation`
+# (default 0.0) ties the RENDERED marker's per-frame direction to the GT azimuth, exactly as
+# `frame_position` ties the rendered ball's centroid to the GT position. Every previous spin decoder in
+# this repo (moving_ball_scene_angvel_*) runs it at 6.0. This config ran it at 0.
+#
+# Switching it on is now motivated rather than hopeful: `experiments/threads/restitution-spin/06_probes/spin_probe.py` shows spin IS
+# strongly encoded in the latent (|omega| corr 0.94 / R2 0.88 at layer 18; signed omega 0.66; shuffled
+# floor ~0.00). The information is there -- only the rendering was missing.
+#
+# `experiments/threads/restitution-spin/06_probes/decoder_gate.py` still checks marker-readable + measured omega tracks GT on held-out
+# clips BEFORE any steering is fitted, and is allowed to stop the pipeline. It has now earned that twice.
+#
+# Train: sbatch experiments/threads/restitution-spin/03_train/train_spin_decoder.sh
+
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256          # native VJEPA2-L resolution -> 16x16=256 spatial tokens (the spec's 8x256)
+  num_frames: 16           # tubelet 2 -> 8 temporal tokens
+  frozen: true
+  layers: [6, 12, 18, 23]  # multi-scale decoding from the full latent state
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 12
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: spin_ball3d
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 4
+  scenario: scene_spinball3d
+  categories: all
+  split: train
+  num_clips: 4096              # 256 scenes x the 4x4 factorial
+  speed_range: [0.06, 0.115]   # WORLD m/s -> image speeds ~[0.010, 0.022]/frame, same as rolling_ball3d
+  omega_range: [0.25, 0.85]    # |spin| rad/frame about world z; signs balanced within every scene
+  n_vel: 4
+  n_spin: 4
+  radius_range: [0.065, 0.065] # unused (fixed scene constant); kept for schema parity
+  seed: 0
+
+loss:
+  target_lo: 0.05
+  target_hi: 0.95
+  charbonnier: 0.1
+  foreground: 1.0
+  foreground_gamma: 1.0
+  ssim: 0.2
+  ms_ssim: 0.2
+  lpips: 0.0
+  temporal_consistency: 0.25
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  frame_position: 20.0
+  frame_spread: 2.0
+  frame_spread_max_var: 0.004
+  # THE FIX for marker_mass = 0.000. The marker is amber, luma 0.617, so its darkness (0.383) fails
+  # `foreground`'s `dark > 0.5` test and it was scored as BACKGROUND -- ~55 px in 65536, 0.08% of the
+  # frame, a negligible gradient against the wall and floor. Erasing it was the loss-minimising move.
+  # This term scores charbonnier on the target's marker pixels alone, selected by COLOUR
+  # (`R - max(G,B)`, 0.25 on the marker and <= 0 on every other material here), so a blank prediction
+  # pays the full marker contrast instead of nothing.
+  # Weight set by gradient balance, not by feel. The term is a MEAN over ~29 marker px/frame, so its
+  # per-pixel pull is weight/29, against `foreground`'s gamma/N_ball ~= 1/1250 on the ball. At 10.0 the
+  # marker gets ~400x the ball's per-pixel weight -- ample to force it to be rendered at all, which is
+  # the failure being fixed. 25.0 was the first choice and is too much: 25 x 0.312 (the measured cost of
+  # a blank prediction) = 7.8 against a converged total loss of ~0.25, i.e. a 30x imbalance that would
+  # invite the decoder to trade away the velocity rendering that currently works at 1.4 deg heading
+  # error. The gate scores omega AND speed, so a marker win bought by wrecking velocity still fails.
+  marker: 50.0
+  # 0.12 measured on real frames: selects 29 px/frame (the marker core). 0.05 grabs 29.8% of the frame
+  # (warm-lit surfaces), 0.20 keeps only 11 px. Scene max redness is 0.2510 == the marker's theoretical
+  # 0.25, so nothing else in this palette competes for the mask.
+  marker_redness_thresh: 0.12
+  # `frame_orientation` stays OFF, and that is a measurement rather than an oversight. It supervises the
+  # marker's image-space direction against obj0_theta, which holds only when the marker rotates in the
+  # image plane. Here it sits 35 deg off the pole under a 62 deg elevation camera and traces a
+  # foreshortened ellipse -- `spin_tracking` needs `ellipse_basis` + an unprojection to recover theta.
+  # On real rendered frames its detector and its target disagree by ~97 deg (chance = 90), so enabling
+  # it would train against noise. Fixing it properly means projecting the target through the ellipse
+  # basis; the colour-masked term above needs no angle convention at all, so try it first.
+  frame_orientation: 0.0
+  frame_orientation_projected: 6.0
+  frame_orientation_body_thresh: 0.5
+  frame_orientation_marker_thresh: 0.18
+
+optim:
+  lr: 5.0e-5
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 4000
+  scheduler: cosine
+  grad_accum: 8
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 1
+  num_workers: 0             # MUST be 0: LatentDataset caches shards PER WORKER (see rb3d config)
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 500
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+  init_from: outputs/runs/spin_ball3d_decoder_mft50/checkpoints/last.pt
+
+output_dir: outputs/runs/spin_ball3d_decoder_orim50o6
+latent_dir: outputs/latents/spin_ball3d/train/vjepa2_large
+wandb: false
+tags: [spin_ball3d, mujoco, crosstalk, velocity, angular_velocity, vjepa2, vit_l_24, decoder_depth12]

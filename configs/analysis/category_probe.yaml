@@ -1,0 +1,9 @@
+# Step 1: category-subspace probing on Physics-IQ latents.
+# Linear + MLP classifiers per layer, with shuffled-label + pixel/appearance controls; plus
+# direction-cosine, principal-angle, and separability geometry. Linear weight vectors are exported as
+# candidate steering directions for Step 3.
+layers: all
+seed: 0
+probes: [linear, mlp]
+pixel_baseline: true
+subspace_layer: -1   # -1 = deepest available layer

@@ -1,0 +1,15 @@
+# Real V-JEPA 2 (HuggingFace). Requires `pip install -e .[encoders]` and ideally CUDA.
+name: vjepa2
+hf_model_id: facebook/vjepa2-vitl-fpc64-256
+hidden_dim: 1024
+num_layers: 24
+num_heads: 16
+patch_size: 16
+tubelet_size: 2
+image_size: 256
+num_frames: 16
+frozen: true
+layers: all
+extract_attention: false
+device: auto
+dtype: float32

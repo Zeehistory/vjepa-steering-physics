@@ -1,0 +1,130 @@
+# RGB decoder for the 3D MuJoCo rolling-ball-on-a-table dataset (rolling_ball3d), 256x256 / 16 frames.
+#
+# Identical architecture + loss to configs/train/moving_ball_scene_decoder.yaml (the 2D velocity decoder)
+# — ONLY the data block differs. That is deliberate: the whole point is to change the renderer and
+# nothing else, so any drop in steering quality is attributable to the 3D scene rather than to a retuned
+# decoder. The frame_position loss transfers unchanged because obj0_pos_x/y are image-plane coordinates
+# in both datasets (the 3D generator projects the ball centre through its fixed camera).
+#
+# Train: sbatch experiments/threads/velocity/03_train/train_rb3d_fp.sh
+
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256          # native VJEPA2-L resolution -> 16x16=256 spatial tokens (the spec's 8x256)
+  num_frames: 16           # tubelet 2 -> 8 temporal tokens
+  frozen: true
+  layers: [6, 12, 18, 23]  # multi-scale decoding from the full latent state
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 12                # smaller decoder: simple scene, a shallow transformer is enough
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256   # 16x16 queries/frame -> patch 256/16 = 16
+  use_layer_embedding: true
+  # HIGH-FIDELITY HEAD. The default 'patch' head projects each query token straight to its
+  # own 16x16 pixel block and then tries to hide the seams with two 3x3 convs -- a 5px
+  # receptive field against a 16px patch, which is structurally unable to do it, and is the
+  # blockiness in every decoded frame so far. 'convup' turns the 16x16 token grid into a
+  # FEATURE map and upsamples it x2 four times with a residual block at each scale.
+  frame_head: convup
+  head_width: 256
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: rolling_ball3d
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 4
+  scenario: scene_rollingball3d
+  clips_per_scene: 8
+  categories: all
+  split: train
+  num_clips: 4000
+  speed_range: [0.06, 0.115]   # WORLD m/s -> image speeds ~[0.010, 0.022]/frame (see configs/data/rolling_ball3d.yaml)
+  radius_range: [0.065, 0.065] # unused by the 3D generator (ball radius is a fixed scene constant); kept for schema parity
+  seed: 0
+
+loss:
+  # Same hard-won fixes that beat the background-collapse trap on the 128px ball:
+  #   target compression off {0,1} so the white-bg optimum is a finite, non-saturated logit;
+  #   separate-mean foreground weighting so neither uniform collapse is a cheap minimum;
+  #   state/trajectory/velocity co-training so the decoder is FORCED to use the per-clip latent
+  #   (localize the ball) instead of rendering a dataset-average blob.
+  target_lo: 0.05
+  target_hi: 0.95
+  # REBALANCED FOR FIDELITY. The inherited weights were tuned to stop the weak patch head from
+  # rendering a static path-covering smear, so the GEOMETRIC terms dominated (frame_position 20
+  # against charbonnier 0.1) -- which buys a correctly-placed blob, not a ball that looks right.
+  # With a head that can actually render, appearance gets the weight and frame_position is only
+  # halved (not dropped): it is still the anti-smear guard, and LPIPS now punishes blur too.
+  charbonnier: 1.0
+  foreground: 2.0
+  foreground_gamma: 10.0    # w = 1 + gamma*(1-target): the dark ball gets ~11x a white pixel
+  ssim: 0.5
+  ms_ssim: 0.5
+  # LPIPS is what makes a frame look RIGHT rather than merely score well on L1: charbonnier
+  # and SSIM are both happy with a slightly blurred ball, a perceptual loss is not.
+  lpips: 0.6
+  temporal_consistency: 0.25
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  # MOTION FAITHFULNESS (the Step-2 magnitude-gap fix). The diff-vector steering held ρ=0.80 but decoded
+  # speed was ~4x too slow: even reconstructing the real fast clip H_b rendered a static path-covering
+  # SMEAR (centroid barely moves) because charbonnier/ssim reward the temporal average and trajectory/
+  # velocity only constrain the auxiliary STATE HEAD, not the rendered pixels. `frame_position` ties the
+  # decoded ball's per-frame soft centroid to GT obj0_pos every frame (a smear's centroid is pinned at
+  # the path midpoint -> large per-frame error), forcing a ball that truly translates. `frame_spread`
+  # adds anti-smear pressure. Validated on the renderer: smear total 1.88 vs faithful 0.09 (was ~tied).
+  frame_position: 10.0
+  frame_spread: 2.0
+  frame_spread_max_var: 0.004
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 16000         # 2x the old schedule; the conv head has more to learn
+  scheduler: cosine
+  grad_accum: 2            # effective batch still 4x2=8, i.e. the SAME optimization as the
+                           # old 1x8 -- just not serialised. Measured 6.85 -> 11.05 steps/min
+                           # (1.61x) on an RTX 5000 Ada, peak RSS 68 -> 71GB.
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 4            # was 1 'because 256px memory is tight' -- untrue: the live job sat at
+                           # 7.6GB of a 46GB L40S (16%) and 56% util, i.e. starved, not bound.
+  num_workers: 6           # NOT 0. The L40S ran at 40% util in bursts = dataloader-bound, and
+                           # 0 workers was costing 2.58x: 12.55 -> 32.4 steps/min (measured on
+                           # L40S, identical per-step losses across arms). Pair with the SHALLOW
+                           # per-worker cache below -- together they also cut RSS 68GB -> 15GB.
+  max_cached_shards: 3     # per-WORKER, so keep it small once num_workers>0; 6x3 shards beats
+                           # 1x16 on both speed and memory.
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 2000
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/hifi_rb3d_decoder
+latent_dir: outputs/hifi/latents/rolling_ball3d/train/vjepa2_large
+wandb: false
+tags: [rolling_ball3d, mujoco, scene_velocity, vjepa2, vit_l_24, decoder_depth12, diff_steering]

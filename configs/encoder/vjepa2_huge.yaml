@@ -1,0 +1,16 @@
+# V-JEPA 2 ViT-H (600M). Requires `pip install -e .[encoders]` and CUDA.
+# Use layers 8,16,24,31 — proportional to ViT-L's 6,12,18,23 (24 vs 32 blocks).
+name: vjepa2
+hf_model_id: facebook/vjepa2-vith-fpc64-256
+hidden_dim: 1280
+num_layers: 32
+num_heads: 16
+patch_size: 16
+tubelet_size: 2
+image_size: 256
+num_frames: 16
+frozen: true
+layers: all
+extract_attention: false
+device: auto
+dtype: float32

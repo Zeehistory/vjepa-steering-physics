@@ -1,0 +1,22 @@
+# Real V-JEPA 2 ViT-g (HuggingFace). Requires `pip install -e .[encoders]` and ideally CUDA.
+#
+# NB: these dims are the ACTUAL ViT-g architecture (1408-dim, 40 layers, 22 heads). They previously read
+# 1024/24/16 -- copied from the ViT-L config -- which understated the model. The encoder wrapper reads the
+# real shapes from the checkpoint, so extraction was unaffected, but the stale numbers invited a genuine
+# error: layer indices are NOT comparable across the two backbones. Layer 23 is 96% of ViT-L's depth but
+# only 58% of ViT-g's, so a size comparison at matched INDICES is really a depth comparison. Match relative
+# depth instead: ViT-L 6/12/18/23 of 24 -> ViT-g 10/20/30/38 of 40.
+name: vjepa2
+hf_model_id: facebook/vjepa2-vitg-fpc64-256
+hidden_dim: 1408
+num_layers: 40
+num_heads: 22
+patch_size: 16
+tubelet_size: 2
+image_size: 256
+num_frames: 16
+frozen: true
+layers: all
+extract_attention: false
+device: auto
+dtype: float32

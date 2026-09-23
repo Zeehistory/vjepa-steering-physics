@@ -1,0 +1,110 @@
+# RGB decoder for the 3D MuJoCo rolling-ball-on-a-table dataset (rolling_ball3d), 256x256 / 16 frames.
+#
+# Identical architecture + loss to configs/train/moving_ball_scene_decoder.yaml (the 2D velocity decoder)
+# — ONLY the data block differs. That is deliberate: the whole point is to change the renderer and
+# nothing else, so any drop in steering quality is attributable to the 3D scene rather than to a retuned
+# decoder. The frame_position loss transfers unchanged because obj0_pos_x/y are image-plane coordinates
+# in both datasets (the 3D generator projects the ball centre through its fixed camera).
+#
+# Train: sbatch experiments/threads/velocity/03_train/train_rb3d_fp.sh
+
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256          # native VJEPA2-L resolution -> 16x16=256 spatial tokens (the spec's 8x256)
+  num_frames: 16           # tubelet 2 -> 8 temporal tokens
+  frozen: true
+  layers: [6, 12, 18, 23]  # multi-scale decoding from the full latent state
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 12                # smaller decoder: simple scene, a shallow transformer is enough
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256   # 16x16 queries/frame -> patch 256/16 = 16
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: rolling_ball3d
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 4
+  scenario: scene_rollingball3d
+  clips_per_scene: 8
+  categories: all
+  split: train
+  num_clips: 4000
+  speed_range: [0.06, 0.115]   # WORLD m/s -> image speeds ~[0.010, 0.022]/frame (see configs/data/rolling_ball3d.yaml)
+  radius_range: [0.065, 0.065] # unused by the 3D generator (ball radius is a fixed scene constant); kept for schema parity
+  seed: 0
+
+loss:
+  # Same hard-won fixes that beat the background-collapse trap on the 128px ball:
+  #   target compression off {0,1} so the white-bg optimum is a finite, non-saturated logit;
+  #   separate-mean foreground weighting so neither uniform collapse is a cheap minimum;
+  #   state/trajectory/velocity co-training so the decoder is FORCED to use the per-clip latent
+  #   (localize the ball) instead of rendering a dataset-average blob.
+  target_lo: 0.05
+  target_hi: 0.95
+  charbonnier: 0.1
+  foreground: 1.0
+  foreground_gamma: 1.0
+  ssim: 0.2
+  ms_ssim: 0.2
+  lpips: 0.0
+  temporal_consistency: 0.25
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  # MOTION FAITHFULNESS (the Step-2 magnitude-gap fix). The diff-vector steering held ρ=0.80 but decoded
+  # speed was ~4x too slow: even reconstructing the real fast clip H_b rendered a static path-covering
+  # SMEAR (centroid barely moves) because charbonnier/ssim reward the temporal average and trajectory/
+  # velocity only constrain the auxiliary STATE HEAD, not the rendered pixels. `frame_position` ties the
+  # decoded ball's per-frame soft centroid to GT obj0_pos every frame (a smear's centroid is pinned at
+  # the path midpoint -> large per-frame error), forcing a ball that truly translates. `frame_spread`
+  # adds anti-smear pressure. Validated on the renderer: smear total 1.88 vs faithful 0.09 (was ~tied).
+  frame_position: 20.0
+  frame_spread: 2.0
+  frame_spread_max_var: 0.004
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 6000          # 2000 clips; override down for pilots (optim.max_steps=1500)
+  scheduler: cosine
+  grad_accum: 8            # batch_size 1 x accum 8 -> effective batch 8 (256px memory is tight)
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 1            # 256px/16fr cross-attn is heavy; keep per-step memory low, use grad_accum
+  num_workers: 0           # MUST be 0: LatentDataset caches shards PER WORKER, so >0 multiplies the
+                           # ~55GB train cache by num_workers and OOMs CPU RAM (192G) at full scale
+                           # (the pilot survived only because its cache was tiny). See scheduling memory.
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 1000
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/rolling_ball3d_decoder_fp
+latent_dir: outputs/latents/rolling_ball3d/train/vjepa2_large
+wandb: false
+tags: [rolling_ball3d, mujoco, scene_velocity, vjepa2, vit_l_24, decoder_depth12, diff_steering]

@@ -1,0 +1,14 @@
+name: transformer
+mode: reconstruct
+hidden_dim: 1536
+depth: 32
+heads: 24
+mlp_ratio: 4.0
+dropout: 0.0
+num_query_tokens_per_frame: 256
+use_layer_embedding: true
+gradient_checkpointing: true
+out_image_size: 256
+out_num_frames: 16
+out_channels: 3
+context_frames: 8

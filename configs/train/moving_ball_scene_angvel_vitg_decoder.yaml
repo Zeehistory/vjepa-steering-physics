@@ -1,0 +1,110 @@
+# V-JEPA2 ViT-g decoder for the BIG-OBJECT constant-spin rotor latents (256x256, 16 frames).
+#
+# WHY: the model-size axis. The earlier ViT-g evidence for the Fourier-in-orientation operator was a
+# decoder-free LATENT GATE only -- a reviewer can fairly object that the gate is not the end metric. This
+# decoder makes the ViT-g result PIXEL-verified, read by the same honest rotor tracker as ViT-L.
+#
+# MATCHED PROTOCOL. Trained on the constant-omega (scene_angvel2d) ViT-g latents, exactly mirroring the
+# ViT-L instrument that produced the alpha ceiling of 0.809. Holding the decoder's training distribution
+# fixed across the two backbones is what makes the comparison a MODEL-SIZE comparison rather than a
+# decoder-distribution comparison.
+#
+# LAYERS ARE MATCHED BY RELATIVE DEPTH, not index: ViT-g has 40 blocks to ViT-L's 24, so ViT-L 6/12/18/23
+# (25/50/75/96% depth) maps to 10/20/30/38 -- NOT to 6/12/18/23, which would be 15-58% and would silently
+# turn a size comparison into a depth comparison.
+#
+# ckpt_every = max_steps: the 4TB group quota is ~full (a 500-step cadence produced 16 x 3.3G intermediates
+# and killed the angvel run at step 7000). Only the final checkpoint plus last.pt are written; the launcher
+# resumes from last.pt, so nothing is lost.
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitg-fpc64-256
+  hidden_dim: 1408
+  num_layers: 40
+  num_heads: 22
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256
+  num_frames: 16
+  frozen: true
+  layers: [10, 20, 30, 38]
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 12
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: moving_ball
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 4
+  scenario: scene_angvel2d
+  clips_per_scene: 8
+  categories: all
+  split: train
+  num_clips: 1000
+  omega_range: [0.06, 0.20]
+  radius_range: [0.32, 0.42]
+  seed: 7
+
+loss:
+  target_lo: 0.05
+  target_hi: 0.95
+  charbonnier: 0.1
+  foreground: 1.0
+  foreground_gamma: 1.0
+  ssim: 0.2
+  ms_ssim: 0.2
+  lpips: 0.0
+  temporal_consistency: 0.25
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  frame_position: 20.0
+  frame_spread: 1.0
+  frame_spread_max_var: 0.12
+  # Orientation faithfulness (the angular analog of frame_position): ties the decoded marker direction to
+  # the GT per-frame obj0_theta. It needs no change for angular acceleration -- obj0_theta is already the
+  # per-frame orientation, so a ramping spin is supervised frame-by-frame exactly as a constant one is.
+  frame_orientation: 6.0
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 8000
+  scheduler: cosine
+  grad_accum: 8
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 1
+  num_workers: 0
+  mixed_precision: bf16
+  log_every: 50
+  # ckpt_every 2000, NOT the 500 the angvel run used: 16 x 3.3G intermediates blew the 4TB group quota and
+  # killed that run at step 7000. Four checkpoints plus last.pt is ~16G and still resume-safe.
+  ckpt_every: 8000
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/moving_ball_scene_angaccel2d_vitg_decoder
+latent_dir: outputs/latents/moving_ball_scene_angvel2d_vitg_train/test/vjepa2_giant
+wandb: false
+tags: [moving_ball, scene_angaccel2d_big, vjepa2, vit_l_24, decoder_depth12, angular_acceleration]

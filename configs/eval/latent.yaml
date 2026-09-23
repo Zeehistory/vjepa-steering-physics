@@ -1,0 +1,2 @@
+metrics: [linear_cka, participation_ratio, twonn_intrinsic_dim]
+probe_controls: [shuffled_latent, randomized_label]

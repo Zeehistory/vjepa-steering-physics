@@ -1,0 +1,97 @@
+# AUTO-GENERATED 2026-09-15 from moving_ball_scene_angvel_big_decoder_orient.yaml for the decoded model-size sweep (vit_h_32). Only the encoder block differs.
+# BIG-OBJECT faithful RGB decoder for the ANGULAR-VELOCITY dataset (256x256, 16 frames). Same as
+# moving_ball_scene_angvel_decoder_orient.yaml but for the LARGE rotor (radius 0.32-0.42 vs 0.11-0.15): the
+# bar now spans ~5-7 of the 16x16 token cells, so (a) the diagnostic showed a much cleaner shared omega-axis
+# (best|cos| 0.29->0.46) AND (b) a big bar should RENDER far more crisply than the old ~2-cell smear that
+# defeated the small-object decoder (the rendering wall). The bar's spatial variance ~ (half_len^2 +
+# half_wid^2)/3 ~ 0.067 for radius 0.42, so `frame_spread_max_var` is relaxed 0.016 -> 0.12 (the object does
+# NOT translate, so frame_spread's anti-smear role is minor here; frame_position still anchors the fixed
+# centre). Trains on the big-object latents (frames+state cached in the latent dir; data.* only sets
+# out_num_frames). Orientation faithfulness via frame_orientation (angular analog of frame_position).
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vith-fpc64-256
+  hidden_dim: 1280
+  num_layers: 32
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256
+  num_frames: 16
+  frozen: true
+  layers: [8, 16, 24, 31]   # matched RELATIVE depth to ViT-L 6,12,18,23
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 12
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: moving_ball
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 4
+  scenario: scene_angvel2d
+  clips_per_scene: 8
+  categories: all
+  split: train
+  num_clips: 1000
+  omega_range: [0.06, 0.20]
+  radius_range: [0.32, 0.42]
+  seed: 7
+
+loss:
+  target_lo: 0.05
+  target_hi: 0.95
+  charbonnier: 0.1
+  foreground: 1.0
+  foreground_gamma: 1.0
+  ssim: 0.2
+  ms_ssim: 0.2
+  lpips: 0.0
+  temporal_consistency: 0.25
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  frame_position: 20.0
+  frame_spread: 1.0
+  frame_spread_max_var: 0.12
+  frame_orientation: 6.0
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 8000
+  scheduler: cosine
+  grad_accum: 8
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 1
+  num_workers: 0
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 2000    # scratch-only run (project quota 97%); 4 intermediates + last.pt, resume-safe
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/moving_ball_scene_angvel2d_big_decoder_orient
+latent_dir: outputs/latents/moving_ball_scene_angvel2d_big/test/vjepa2_large
+wandb: false
+tags: [moving_ball, scene_angvel2d_big, vjepa2, vit_h_32, decoder_depth12, angular_velocity]

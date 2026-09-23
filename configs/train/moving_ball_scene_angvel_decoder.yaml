@@ -1,0 +1,98 @@
+# Faithful RGB decoder for the ANGULAR-VELOCITY dataset (256x256, 16 frames). Same architecture + losses as
+# moving_ball_scene_decoder.yaml (the velocity/accel frame_position decoder), with ONE change for rotation:
+# the spinning bar has a larger spatial extent than the ball, so `frame_spread_max_var` is relaxed (the
+# bar's variance ~ (half_len^2 + half_wid^2)/3 ~ 0.009 exceeds the ball's 0.004 cap -- the un-relaxed cap
+# would shrink the bar and destroy the corner/orientation signal we need the decoder to render). The
+# anti-smear rationale for frame_spread is translation-specific anyway; the object here does not translate,
+# so a gentle cap plus frame_position (which anchors the fixed rotation centre) is enough. Orientation
+# faithfulness comes from the reconstruction losses (charbonnier/ssim/ms_ssim): a rotation-averaged blur of
+# a spinning bar is heavily penalized by ssim, so the decoder is pushed to render the correct per-frame
+# orientation -- the rotational analog of the velocity magnitude-faithfulness fix.
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256
+  num_frames: 16
+  frozen: true
+  layers: [6, 12, 18, 23]
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 12
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: moving_ball
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 4
+  scenario: scene_angvel2d
+  clips_per_scene: 8
+  categories: all
+  split: train
+  num_clips: 4000
+  omega_range: [0.06, 0.20]
+  radius_range: [0.11, 0.15]
+  seed: 0
+
+loss:
+  target_lo: 0.05
+  target_hi: 0.95
+  charbonnier: 0.1
+  foreground: 1.0
+  foreground_gamma: 1.0
+  ssim: 0.2
+  ms_ssim: 0.2
+  lpips: 0.0
+  temporal_consistency: 0.25
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  # frame_position anchors the decoded soft centroid to the fixed rotation centre (obj0_pos, constant) every
+  # frame -> keeps the rotor from drifting. frame_spread cap RELAXED for the larger bar (see header).
+  frame_position: 20.0
+  frame_spread: 1.0
+  frame_spread_max_var: 0.016
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 8000
+  scheduler: cosine
+  grad_accum: 8
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 1
+  num_workers: 0
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 1000
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/moving_ball_scene_angvel2d_decoder_fp
+latent_dir: outputs/latents/moving_ball_scene_angvel2d/train/vjepa2_large
+wandb: false
+tags: [moving_ball, scene_angvel2d, vjepa2, vit_l_24, decoder_depth12, angular_velocity]

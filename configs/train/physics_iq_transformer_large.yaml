@@ -1,0 +1,73 @@
+# Full-scale first-pass config: VJEPA2 ViT-L/24-layer latents + large transformer decoder on Physics-IQ.
+# For a later ViT-H/32-layer validation, update the encoder checkpoint/spec and use a separate latent_dir.
+# Run extraction first (experiments/pipeline/02_encode/extract_latents.py), then `accelerate launch experiments/pipeline/03_train/train_decoder.py`.
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256
+  num_frames: 16
+  frozen: true
+  layers: [6, 12, 18, 23]   # multi-scale decoding from several layers
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 24
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: physics_iq
+  root: null            # set to your Physics-IQ download
+  image_size: 256
+  num_frames: 16
+  fps: 8
+  categories: all
+  split: train
+
+loss:
+  charbonnier: 1.0
+  ssim: 0.25
+  ms_ssim: 0.25
+  lpips: 0.0
+  temporal_consistency: 0.5
+
+optim:
+  lr: 2.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 2000
+  max_steps: 200000
+  scheduler: cosine
+  grad_accum: 4
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 2
+  num_workers: 2
+  mixed_precision: bf16
+  log_every: 50
+  ckpt_every: 2000
+  eval_every: 5000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/physics_iq_decoder_large
+latent_dir: outputs/latents/physics_iq/vjepa2_large
+wandb: true
+tags: [physics_iq, vjepa2, vit_l_24, decoder_large]

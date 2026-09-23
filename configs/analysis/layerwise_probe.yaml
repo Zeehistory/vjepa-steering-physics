@@ -1,0 +1,4 @@
+layers: all
+seed: 0
+variables: [pos, vel, acc, radius, gravity, collision_event, visible]
+probes: [linear, mlp]

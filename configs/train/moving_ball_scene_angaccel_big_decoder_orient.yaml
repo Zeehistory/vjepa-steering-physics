@@ -1,0 +1,110 @@
+# BIG-OBJECT faithful RGB decoder for the ANGULAR-ACCELERATION dataset (256x256, 16 frames).
+#
+# Identical to moving_ball_scene_angvel_big_decoder_orient.yaml except for the roll-out the latents come
+# from: theta(t) = theta0 + omega0*t + alpha/2*t^2 instead of a constant spin. Its job is to be a better
+# MEASUREMENT INSTRUMENT, nothing more.
+#
+# Why it exists. The constant-omega decoder already renders angular acceleration surprisingly well from the
+# true latent (ceiling rho=0.809), but well short of the 0.98 it achieves on the constant spins it trained
+# on -- a quadratic orientation profile is off-distribution for it, and that shortfall caps every alpha
+# steering number read through it. Training the renderer on alpha clips removes the instrument from the
+# critical path so the residual gap can be attributed to the OPERATOR rather than to the renderer.
+#
+# This does NOT weaken the zero-shot claim. The decoder is a frozen latents->pixels renderer; it never sees
+# the command, the operator, or H_b at steer time. The steering operator remains fit on constant-omega
+# clips only. Improving the instrument that reads the answer is not the same as fitting the answer -- it is
+# exactly the arrangement the angular-velocity result already used (an omega-trained decoder reading an
+# omega steer).
+encoder:
+  name: vjepa2
+  hf_model_id: facebook/vjepa2-vitl-fpc64-256
+  hidden_dim: 1024
+  num_layers: 24
+  num_heads: 16
+  patch_size: 16
+  tubelet_size: 2
+  image_size: 256
+  num_frames: 16
+  frozen: true
+  layers: [6, 12, 18, 23]
+
+decoder:
+  name: transformer
+  mode: reconstruct
+  hidden_dim: 1024
+  depth: 12
+  heads: 16
+  mlp_ratio: 4.0
+  dropout: 0.0
+  num_query_tokens_per_frame: 256
+  use_layer_embedding: true
+  gradient_checkpointing: true
+  out_image_size: 256
+  out_num_frames: 16
+  out_channels: 3
+
+data:
+  name: moving_ball
+  root: null
+  image_size: 256
+  num_frames: 16
+  fps: 4
+  scenario: scene_angaccel2d
+  clips_per_scene: 8
+  categories: all
+  split: train
+  num_clips: 1000
+  omega0_range: [-0.06, 0.06]
+  alpha_range: [0.005, 0.014]
+  radius_range: [0.32, 0.42]
+  seed: 7
+
+loss:
+  target_lo: 0.05
+  target_hi: 0.95
+  charbonnier: 0.1
+  foreground: 1.0
+  foreground_gamma: 1.0
+  ssim: 0.2
+  ms_ssim: 0.2
+  lpips: 0.0
+  temporal_consistency: 0.25
+  state: 1.0
+  trajectory: 5.0
+  velocity: 5.0
+  frame_position: 20.0
+  frame_spread: 1.0
+  frame_spread_max_var: 0.12
+  # Orientation faithfulness (the angular analog of frame_position): ties the decoded marker direction to
+  # the GT per-frame obj0_theta. It needs no change for angular acceleration -- obj0_theta is already the
+  # per-frame orientation, so a ramping spin is supervised frame-by-frame exactly as a constant one is.
+  frame_orientation: 6.0
+
+optim:
+  lr: 5.0e-4
+  weight_decay: 0.05
+  betas: [0.9, 0.999]
+  warmup_steps: 100
+  max_steps: 8000
+  scheduler: cosine
+  grad_accum: 8
+  grad_clip: 1.0
+  ema_decay: 0.9999
+
+train:
+  batch_size: 1
+  num_workers: 0
+  mixed_precision: bf16
+  log_every: 50
+  # ckpt_every 2000, NOT the 500 the angvel run used: 16 x 3.3G intermediates blew the 4TB group quota and
+  # killed that run at step 7000. Four checkpoints plus last.pt is ~16G and still resume-safe.
+  ckpt_every: 2000
+  eval_every: 100000
+  seed: 0
+  deterministic: false
+  resume: null
+
+output_dir: outputs/runs/moving_ball_scene_angaccel2d_decoder_orient
+latent_dir: outputs/latents/moving_ball_scene_angaccel2d_train/test/vjepa2_large
+wandb: false
+tags: [moving_ball, scene_angaccel2d_big, vjepa2, vit_l_24, decoder_depth12, angular_acceleration]

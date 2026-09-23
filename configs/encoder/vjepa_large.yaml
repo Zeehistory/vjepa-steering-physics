@@ -1,0 +1,14 @@
+# V-JEPA v1 via a HuggingFace mirror (same token contract as V-JEPA2).
+name: vjepa
+hf_model_id: facebook/vjepa-vitl-16
+hidden_dim: 1024
+num_layers: 24
+num_heads: 16
+patch_size: 16
+tubelet_size: 2
+image_size: 224
+num_frames: 16
+frozen: true
+layers: all
+device: auto
+dtype: float32

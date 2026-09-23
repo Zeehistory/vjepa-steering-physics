@@ -1,0 +1,5 @@
+# Step 4: detect achievable-vs-non-achievable latent structure, then steer failures toward success.
+layer: -1               # steer layer; -1 = deepest available
+alphas: [0.0, 1.0, 2.0, 4.0]
+num_steer: 3            # failed clips to steer + decode
+seed: 0

@@ -1,0 +1,4 @@
+layers: all
+embed_method: umap   # falls back to PCA if umap-learn is absent
+intrinsic_dim: [participation_ratio, twonn]
+direction_variable: vel   # circular code test target
